@@ -24,7 +24,6 @@ end
 
 local VersionManager = {}
 
-
 local function AnnounceVersion()
     LOG:Trace("VersionManager:AnnounceVersion()")
     local version = CLM.CORE:GetVersion()
@@ -58,6 +57,17 @@ local function OutOfDate(self, version, disable)
     end
 end
 
+local function SetProfileVersion(name, version)
+    local profile = ProfileManager:GetProfileByName(name)
+    if profile then
+        profile:SetVersion(version.major, version.minor, version.patch, version.changeset)
+    end
+end
+
+local function StoreProfileVersion(self, name, version)
+    self.db[name] = version
+end
+
 local function HandleIncomingMessage(self, message, distribution, sender)
     LOG:Trace("VersionManager:HandleIncomingMessage()")
     local mtype = message:Type() or 0
@@ -87,11 +97,8 @@ local function HandleAnnounceVersion(self, data, sender)
         end
     end
 
-    -- Store received data
-    local profile = ProfileManager:GetProfileByName(sender)
-    if profile then
-        profile:SetVersion(receivedVersion.major, receivedVersion.minor, receivedVersion.patch, receivedVersion.changeset)
-    end
+    SetProfileVersion(sender, receivedVersion)
+    StoreProfileVersion(self, sender, receivedVersion)
 end
 
 -- local function HandleRequestVersion(self, data, sender)
@@ -103,6 +110,12 @@ end
 --     end
 -- end
 
+local function RestoreVersions(self)
+    for name, version in pairs(self.db) do
+        SetProfileVersion(name, version)
+    end
+end
+
 function VersionManager:Initialize()
     LOG:Trace("VersionManager:Initialize()")
     self._initialized = false
@@ -110,6 +123,12 @@ function VersionManager:Initialize()
     self._lastRequestResponse = 0
     self._lastDisplayedMessage = 0
     self._lastDisplayedMessageD = 0
+
+    local db = MODULES.Database:Personal()
+    if not db.version then
+        db.version = {}
+    end
+    self.db = db.version
 
     self.handlers = {
         [CONSTANTS.VERSIONNING_COMM.TYPE.ANNOUNCE_VERSION]  = HandleAnnounceVersion,
@@ -125,6 +144,7 @@ function VersionManager:Initialize()
     LedgerManager:RegisterOnUpdate(function(lag, uncommitted)
         if lag ~= 0 or uncommitted ~= 0 then return end
         if not self._initialized then
+            RestoreVersions(self)
             LOG:Message("Classic Loot Manager %s initialization complete.", ColorCodeText(CLM.CORE:GetVersionString(), "00cc00"))
             C_Timer.After(math.random(1, 5), function()
                 AnnounceVersion(self)
